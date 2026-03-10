@@ -1,4 +1,4 @@
-package com.rbih.loan_service;
+package com.rbih.loan;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

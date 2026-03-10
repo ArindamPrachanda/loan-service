@@ -1,4 +1,4 @@
-package com.rbih.loan_service;
+package com.rbih.loan;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
