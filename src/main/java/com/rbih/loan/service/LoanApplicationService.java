@@ -41,45 +41,70 @@ public class LoanApplicationService {
         this.repository = repository;
     }
 
+    /**
+     * Evaluate Loan applications in terms of eligibility and other criteria finally approve or reject Loan.
+     *
+     * @param request Loan Application Request
+     * @return LoanApplicationResponse approve or reject Loan
+     */
     @Transactional
     public LoanApplicationResponse evaluate(LoanApplicationRequest request) {
 
         List<String> reasons = new ArrayList<>();
 
+        //checking Credit Score Eligibility
         if (request.getApplicant().getCreditScore() < MIN_CREDIT_SCORE) {
             reasons.add(RejectionReason.LOW_CREDIT_SCORE.name());
         }
 
+        //Checking Age Tenure Limit Eligibility
         if (request.getApplicant().getAge() + request.getLoan().getTenureMonths()/12 > MAX_AGE_PLUS_TENURE) {
             reasons.add(RejectionReason.AGE_TENURE_LIMIT_EXCEEDED.name());
         }
 
+        //Determining Risk Band
         RiskBand riskBand = determineRisk(request.getApplicant().getCreditScore());
 
+        //Calculate the Interest Rate
         BigDecimal interestRate = calculateInterestRate(request.getApplicant(), request.getLoan(), riskBand);
 
+        //Calculate EMI
         BigDecimal emi = calculateEmi(request.getLoan().getAmount(), interestRate, request.getLoan().getTenureMonths());
 
+        //Calculate max allowed EMI
         BigDecimal maxAllowedEmi = request.getApplicant().getMonthlyIncome().multiply(EMI_INCOME_THRESHOLD).setScale(SCALE, ROUNDING);
 
+        //checking max allowed emi eligibility
         if (emi.compareTo(maxAllowedEmi) > 0) {
             reasons.add(RejectionReason.EMI_EXCEEDS_60_PERCENT.name());
         }
 
+        //Checking all Eligibility Rules, if anything fails then sent rejection.
         if (!reasons.isEmpty()) {
             return saveAndBuildRejectedResponse(request, reasons);
         }
 
+        //Generating Loan Offer
         LoanOffer loanOffer = generateOffer(emi, interestRate, request.getLoan().getTenureMonths(),
                 request.getApplicant().getMonthlyIncome());
 
+        //Checking if EMI > 50%, application must be REJECTED
         if (loanOffer == null) {
             return saveAndBuildRejectedResponse(request, List.of(RejectionReason.EMI_EXCEEDS_50_PERCENT_OF_INCOME.name()));
         }
 
+        //Return loan Approval
         return saveAndBuildApprovedResponse(request, riskBand, loanOffer);
     }
 
+    /**
+     * Build and save approved response object.
+     *
+     * @param request loan application request
+     * @param riskBand risk band
+     * @param loanOffer loan offer
+     * @return LoanApplicationResponse
+     */
     private LoanApplicationResponse saveAndBuildApprovedResponse(LoanApplicationRequest request, RiskBand riskBand,
                                                                  LoanOffer loanOffer) {
 
@@ -99,9 +124,19 @@ public class LoanApplicationService {
                 .build();
     }
 
+    /**
+     * Generate Offer incase eligible for loan
+     *
+     * @param emi emi amount
+     * @param interestRate interest rate
+     * @param tenureMonths tenure months
+     * @param monthlyIncome monthly income
+     * @return Loan offer
+     */
     private LoanOffer generateOffer(BigDecimal emi, BigDecimal interestRate,
                                     Integer tenureMonths, BigDecimal monthlyIncome) {
 
+        //EMI > 50%, application must be REJECTED
         BigDecimal maxAllowedEmi = monthlyIncome.multiply(EMI_OFFER_THRESHOLD).setScale(2, RoundingMode.HALF_UP);
 
         if (emi.compareTo(maxAllowedEmi) > 0) {
@@ -117,6 +152,13 @@ public class LoanApplicationService {
                 .build();
     }
 
+    /**
+     * Build and Save Reject Response.
+     *
+     * @param request Loan Application Request
+     * @param reasons Reasons list
+     * @return LoanApplicationResponse
+     */
     private LoanApplicationResponse saveAndBuildRejectedResponse(LoanApplicationRequest request, List<String> reasons) {
 
         LoanApplication entity = buildEntity(request, ApplicationStatus.REJECTED, null, null, reasons);
@@ -130,6 +172,16 @@ public class LoanApplicationService {
                 .build();
     }
 
+    /**
+     * Built Response Object
+     *
+     * @param request Loan Application Request
+     * @param status Application Status
+     * @param riskBand Risk Band
+     * @param offer Loan Offer
+     * @param rejectionReasons Reasons list
+     * @return LoanApplication
+     */
     private LoanApplication buildEntity(LoanApplicationRequest request, ApplicationStatus status,
                                         RiskBand riskBand, LoanOffer offer, List<String> rejectionReasons) {
         return LoanApplication.builder()
@@ -150,6 +202,14 @@ public class LoanApplicationService {
                 .build();
     }
 
+    /**
+     * Calculate EMI
+     *
+     * @param principal Principal amount
+     * @param annualRatePercent annual interest rate
+     * @param tenureMonths tenure Months
+     * @return Emi amount
+     */
     private BigDecimal calculateEmi(BigDecimal principal, BigDecimal annualRatePercent, int tenureMonths) {
 
         // r = annual rate / 12 / 100
@@ -167,24 +227,45 @@ public class LoanApplicationService {
         return numerator.divide(denominator, SCALE, ROUNDING);
     }
 
+    /**
+     * Calculate Interest Rate.
+     *
+     * @param applicantRequest applicant details
+     * @param loan Loan details
+     * @param riskBand Risk Band
+     * @return Interest rate
+     */
     private BigDecimal calculateInterestRate(ApplicantRequest applicantRequest, LoanRequest loan, RiskBand riskBand) {
 
         BigDecimal rate = BASE_RATE;
 
+        //LOW → +0%
+        //MEDIUM → +1.5%
+        //HIGH → +3%
         switch (riskBand) {
             case MEDIUM -> rate = rate.add(BigDecimal.valueOf(1.5));
             case HIGH -> rate = rate.add(BigDecimal.valueOf(3));
         }
 
+        //SALARIED → +0%
+        //SELF_EMPLOYED → +1%
         if (applicantRequest.getEmploymentType() == EmploymentType.SELF_EMPLOYED)
             rate = rate.add(BigDecimal.ONE);
 
+        //Loan > 10,00,000 → +0.5%
+        //Otherwise → +0%
         if (loan.getAmount().compareTo(BigDecimal.valueOf(1_000_000)) > 0)
             rate = rate.add(BigDecimal.valueOf(0.5));
 
         return rate;
     }
 
+    /**
+     * Determine the Risk Band
+     *
+     * @param creditScore Credit score
+     * @return Risk Band
+     */
     private RiskBand determineRisk(int creditScore) {
 
         if (creditScore >= 750) return RiskBand.LOW;

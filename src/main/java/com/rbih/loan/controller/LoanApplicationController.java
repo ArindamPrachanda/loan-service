@@ -24,7 +24,7 @@ public class LoanApplicationController {
         this.loanApplicationService = loanApplicationService;
     }
 
-    @GetMapping
+    @GetMapping("/health")
     public ResponseEntity<String> getAllApplications() {
         return ResponseEntity.status(HttpStatus.OK).body("Loan Applications is Up!");
     }
